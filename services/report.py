@@ -5,6 +5,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch
 import os
 import re
+from io import BytesIO
 
 # Professional Color Palette
 PRIMARY_BLUE = colors.HexColor("#1565C0")  # Dark Blue for headings
@@ -12,20 +13,10 @@ LIGHT_BLUE = colors.HexColor("#E3F2FD")    # Very light blue for backgrounds
 BORDER_GRAY = colors.HexColor("#B0BEC5")   # Soft gray for borders
 
 def generate_report(data):
-    os.makedirs("reports", exist_ok=True)
-
-     #get date safely
-    date = data.get('client_info', {}).get('date', 'report')
-
-    #sanitize filename (IMPORTANT)
-    safe_date = re.sub(r'[^a-zA-Z0-9_-]', '_', str(date))
-
-
-    filename = f"Report_{safe_date}.pdf"
-    filepath = os.path.join("reports", filename)
+    buffer = BytesIO()
     
     doc = SimpleDocTemplate(
-        filepath,
+        buffer, 
         pagesize=A4,
         leftMargin=0.5*inch, rightMargin=0.5*inch, topMargin=0.5*inch, bottomMargin=0.5*inch
     )
@@ -128,4 +119,5 @@ def generate_report(data):
     story.append(sig_table)
 
     doc.build(story)
-    return filepath
+    buffer.seek(0)
+    return buffer
