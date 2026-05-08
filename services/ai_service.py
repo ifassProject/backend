@@ -1,21 +1,20 @@
-# ...existing code...
 import json
 import os
 import re
 from copy import deepcopy
 from dotenv import load_dotenv
+from openai import OpenAI
 
-import google.generativeai as genai
-from google.api_core.exceptions import NotFound
-
-# IMPORTANT: move key to environment variable
+# Load environment variables
 load_dotenv()
-# Windows PowerShell: setx GEMINI_API_KEY "your_key"
-API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise RuntimeError("GEMINI_API_KEY is not set")
 
-genai.configure(api_key=API_KEY)
+API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not API_KEY:
+    raise RuntimeError("OPENAI_API_KEY is not set")
+
+# Initialize OpenAI client
+client = OpenAI(api_key=API_KEY)
 
 SOAP_TEMPLATE = {
     "client_info": {
@@ -67,71 +66,65 @@ SOAP_TEMPLATE = {
 
 
 def _extract_json_text(raw_text: str) -> str:
+    """
+    Extract valid JSON object from model response
+    """
+
     text = (raw_text or "").strip()
 
-    # Remove markdown fences if present
+    # Remove markdown code blocks
     text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*```$", "", text)
 
-    # Keep only first JSON object
+    # Find JSON object
     start = text.find("{")
     end = text.rfind("}")
+
     if start == -1 or end == -1 or end <= start:
         raise ValueError("No JSON object found in model output")
+
     return text[start:end + 1]
 
 
 def _merge_template(template, data):
-    """Keep only template keys and coerce basic types."""
+    """
+    Keep only template keys and coerce basic types
+    """
+
     if isinstance(template, dict):
+
         data = data if isinstance(data, dict) else {}
+
         out = {}
+
         for k, v in template.items():
             out[k] = _merge_template(v, data.get(k))
+
         return out
 
     if isinstance(template, int):
+
         try:
             return int(data) if data is not None else template
+
         except (TypeError, ValueError):
             return template
 
     if template is None:
         return data if data is not None else None
 
-    # string default
     return str(data).strip() if data is not None else template
 
 
-def _candidate_models():
-    # Try common names first, then fallback to list_models()
-    base = [
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash",
-        "models/gemini-1.5-flash",
-        "models/gemini-1.5-pro",
-        "models/gemini-2.0-flash",
-    ]
-    seen = set(base)
-
-    try:
-        for m in genai.list_models():
-            methods = getattr(m, "supported_generation_methods", []) or []
-            if "generateContent" in methods:
-                if m.name not in seen:
-                    base.append(m.name)
-                    seen.add(m.name)
-    except Exception:
-        pass
-
-    return base
-
-
 def extract_json(text: str):
+
     prompt = f"""
 You are a SOAP medical report extractor.
-Return ONLY valid JSON (no explanation, no markdown).
+
+Return ONLY valid JSON.
+No explanation.
+No markdown.
+
 Use this exact schema and fill missing values with null or "".
 
 Schema:
@@ -141,22 +134,59 @@ TEXT:
 {text}
 """.strip()
 
-    last_err = None
-    for model_name in _candidate_models():
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            raw = getattr(response, "text", "") or ""
-            parsed = json.loads(_extract_json_text(raw))
-            return _merge_template(deepcopy(SOAP_TEMPLATE), parsed)
-        except NotFound as e:
-            last_err = e
-            continue
-        except json.JSONDecodeError as e:
-            last_err = e
-            continue
-        except Exception as e:
-            last_err = e
-            continue
+    try:
 
-    raise RuntimeError(f"Failed to generate valid SOAP JSON. Last error: {last_err}")
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You extract SOAP medical reports into structured JSON. "
+                        "Always return valid JSON only."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+
+        raw = response.choices[0].message.content
+
+        parsed = json.loads(_extract_json_text(raw))
+
+        cleaned = _merge_template(
+            deepcopy(SOAP_TEMPLATE),
+            parsed
+        )
+
+        return cleaned
+
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Invalid JSON returned by OpenAI: {e}")
+
+    except Exception as e:
+        raise RuntimeError(f"Failed to generate valid SOAP JSON: {e}")
+
+
+# Test
+if __name__ == "__main__":
+
+    sample_text = """
+    Client John Doe complains of neck pain and headaches.
+
+    Temperature normal.
+
+    Tenderness around upper trapezius.
+
+    Recommended massage therapy and stretching.
+
+    Follow-up next week.
+    """
+
+    result = extract_json(sample_text)
+
+    print(json.dumps(result, indent=2, ensure_ascii=False))
