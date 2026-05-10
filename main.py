@@ -7,7 +7,7 @@ app = FastAPI()
 
 
 origins = [
-    "https://api.usoapnote.com",       
+    "https://www.usoapnote.com",       
 ]
 
 app.add_middleware(
