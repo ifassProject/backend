@@ -3,4 +3,4 @@ uvicorn
 reportlab
 pydantic
 python-dotenv
-google-generativeai
+OpenAI
